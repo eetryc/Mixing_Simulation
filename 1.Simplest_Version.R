@@ -1,257 +1,265 @@
 #####################################
-##### Simple CKMR Sampling  #########
+##### Single Stock simple sim #######
 #####################################
 
-## Go through 1.Simplest_Version
 
-#### Using sampled fish, create matrix
+## ^ variable to manipulate
 
-library(tidyverse)
+library(tidyr)
 library(dplyr)
-library(lubridate)
+library(stringr)
+library(ggplot2)
+
+######## Generate population at year 0 ########
+
+## Define parameters
+init.pop.size <- 5000  ## ^
+
+init.prop.female <- 0.5 
 
 
-### POPs filter 
-POpairs <- samples %>%
-  rename_with(~ paste0(.x, "_1"), everything()) %>% # add the columns for each indiv
-  cross_join(samples %>% rename_with(~ paste0(.x, "_2"), everything())) %>% # remove self-pairings
-  # mutate to add the POP possibility (y/n) with the year and reproductive age filters
-  mutate(HSPPOP_candidate = ifelse(cohort_1 < cohort_2 & 
-                                     (cohort_2 - cohort_1 >= rep.age), "1","0")) %>% 
-  #get rid of the ones that are the same comp, eg 1 and 2 vs 2 and 1 
-  filter(id_1 != id_2) %>% 
-  mutate(PairID = paste(id_1, id_2, sep = "_")) %>%
-  mutate(older_first=ifelse(cohort_1 < cohort_2 |(cohort_1 == cohort_2 & id_1 < id_2), T,F) ) %>% 
-  filter(older_first) %>%
-  select(-older_first) %>% 
-  mutate(AgeDif = cohort_2 - cohort_1)
+age <- rep(4, times = init.pop.size) # set at 5 so these guys can mate when the loop starts
+
+sex <- sample(c('1','0'), size = init.pop.size,
+              prob = c(init.prop.female, 1 - init.prop.female),
+              replace = TRUE) 
+
+mother <- rep(NA, init.pop.size)
+
+father <- rep(NA, init.pop.size)
+
+cohort <- rep(0, times = init.pop.size)
+
+number <- seq_len(init.pop.size)
+
+id <- paste(cohort, number, sex, sep = "_")
+
+
+pop.year0 <- data.frame(id, number, cohort, age, sex, mother, father, stringsAsFactors = FALSE)
 
 
 
-# count numnber of yes or no to get a better idea of how they are changing
-POpairs %>% 
-  dplyr::count(HSPPOP_candidate)
 
 
-POPonly <- POpairs %>% 
-  filter(HSPPOP_candidate == 1) %>% 
-  mutate(RObase=ifelse(sex_1 == "U",2,1)) %>% 
-  mutate(Age_dif_exp = 0)
+######## Set simulation parameters ########
+rep.age <- 5 # minimum age to reproduce
+
+mean_offspring <- 200 # mean number of offspring per female ## ^
+
+# survival_prob <- 0.4 # annual survival probability (only have one, change in code to shift by getting rid of the following)
+# Chaning to age dependent survival
+surv_juv0   <- 0.2  # age 0 ## ^
+surv_juv1_4 <- 0.5  # ages 1–4 ## ^
+surv_adult  <- 0.6  # age 5+ ## ^
+ 
+p_catch <- 0.1 # percent mortality of catch ## ^ 
+
+K <- 5000  # carrying capacity to stabilize population ## ^ 
 
 
-### HSPs and combine ###
+years <- 20 # number of years to simulate and extract ## ^
 
-HSpairs <- samples %>%
-  rename_with(~ paste0(.x, "_1"), everything()) %>% # sort into col for each indiv
-  cross_join(samples %>% rename_with(~ paste0(.x, "_2"), everything())) %>% # remove self-pairings
-  mutate(HSPPOP_candidate = ifelse(cohort_1 < cohort_2 & (cohort_1 != cohort_2),"1","0")) %>% 
-  #get rid of the ones that are the same comp, eg 1 and 2 vs 2 and 1 
-  filter(id_1 != id_2) %>% 
-  mutate(PairID = paste(id_1, id_2, sep = "_")) %>%
-  mutate(older_first=ifelse(cohort_1 < cohort_2 |(cohort_1 == cohort_2 & id_1 < id_2), T,F) ) %>% 
-  filter(older_first) %>%
-  select(-older_first) %>% 
-  mutate(AgeDif = cohort_2 - cohort_1) %>% 
-  filter(!(mother_1 == mother_2 & father_1 == father_2))
+burn.in <- 50 # number of years to run the simulation before counting 
 
-# count numnber of yes or no to get a better idea of how they are changing
-HSpairs %>% 
-  dplyr::count(HSPPOP_candidate)
-
-HSPonly <- HSpairs %>% 
-  filter(HSPPOP_candidate == 1) %>% 
-  mutate(RObase=4) %>% 
-  mutate(Age_dif_exp = AgeDif)
+run.years <- burn.in + years # total years to run
 
 
-# join the two tables
-library(plyr)
-possible_pairs <- rbind(data.frame=POPonly,
-                          data.frame=HSPonly)  %>% 
+
+######## Initialize storage ########
+# Clear if rerunning first 
+rm(pop_list, all_fish, current_pop,samples,empty_offspring)
+
+pop_list <- list(pop.year0) # separate table for each year
+
+all_fish <- pop.year0 # running table of all fish
+
+current_pop <- pop.year0 # current population
+
+sampling_window <- (run.years - years + 1):run.years
+
+samples <- data.frame() # create empty data frame
+
+sample_rate <- 0.07 # change percent as needed
+
+empty_offspring <- pop.year0[0, ] %>%
   mutate(
-    sex_num = case_when(
-      sex_1 == "U" ~ NA_real_, # unknown to na
-      sex_1 == "0" ~ 1, # male is 1
-      sex_1 == "1" ~ 0 # female is 0
-    )
+    id      = as.character(id),
+    number  = as.integer(number),
+    cohort  = as.integer(cohort),
+    age     = as.numeric(age),
+    sex     = as.character(sex),
+    mother  = as.character(mother),
+    father  = as.character(father)
   )
 
-
-
-
-
-
-
-
-#### JAGS model ####
-cat("model{
-  surv ~ dbeta(1, 1)
-
-  # Adult numbers
-	for(i in 1:years) {
-	
-	  Nadult[i] ~ dunif(100,10000)
-
-	}
-	
-	
-  for(j in 1:nobs) {
+######## LOOP OVER YEARS ########
+for (yr in 1:run.years) {
+  
+  # Age everyone
+  current_pop <- current_pop %>% mutate(age = age + 1)
+  
+  ### AGE-STRUCTURED NATURAL SURVIVAL ###
+  current_pop$survive_nat <- NA_integer_
+  
+  # age 0
+  idx0 <- current_pop$age == 0
+  current_pop$survive_nat[idx0] <- rbinom(sum(idx0), 1, surv_juv0)
+  
+  # ages 1–4
+  idx1_4 <- current_pop$age >= 1 & current_pop$age <= 4
+  current_pop$survive_nat[idx1_4] <- rbinom(sum(idx1_4), 1, surv_juv1_4)
+  
+  # adults 5+
+  idx_adult <- current_pop$age >= 5
+  current_pop$survive_nat[idx_adult] <- rbinom(
+    sum(idx_adult), 1,
+    surv_adult * exp(-nrow(current_pop) / (8*K))
+  )
+  
+  ### NATURAL SURVIVORS ###
+  alive_after_nat <- current_pop %>% filter(survive_nat == 1)
+  
+  ### FISHING MORTALITY ###
+  alive_after_nat$caught <- rbinom(nrow(alive_after_nat), 1, p_catch)
+  
+  harvested_this_year <- alive_after_nat %>% filter(caught == 1)
+  survivors_to_next_year <- alive_after_nat %>% filter(caught == 0)
+  
+  ### UPDATE POPULATION ###
+  current_pop <- survivors_to_next_year
+  # table of the dead fish (natural mort. or fishing mort)
+  dead_this_year <- current_pop[current_pop$survive == 0, ]
+  
+  # ---- SAMPLE  (last 10 years) ----
+  if (yr %in% sampling_window) {
+    n_sample <- floor(sample_rate * nrow(harvested_this_year))
     
-    TruePairs[j] ~ dbinom(
-      (RObase[j] * ((surv)^ AgeDif[j])) /
-      (Nadult[year[j]]),
-      Pair_viable_count_per_agedif[j]
-    )
-  }	
+    sampled_fish <- harvested_this_year %>%
+      slice_sample(n = min(n_sample, nrow(harvested_this_year)), replace = FALSE) %>%
+      mutate(year_sampled = yr)
+    
+    samples <- bind_rows(samples, sampled_fish)
+  }
+  
+  # Keep only survivors
+  current_pop <- current_pop[current_pop$survive == 1, ]
+  current_pop$survive <- NULL
+  
+  # if pop goes extinct
+  if(nrow(current_pop) == 0){
+    message(paste("Population extinct at year", yr))
+    break
+  }
+  
+  # Select mature females and males
+  mothers <- current_pop %>%
+    filter(sex == '1', 
+           age >= rep.age)
+  
+  if(nrow(mothers) > 0){
+    mothers$can_mate <- rbinom(nrow(mothers), 1, 0.8)
+    mothers <- mothers[mothers$can_mate == 1, ]
+    mothers$can_mate <- NULL
+    mothers$num_offspring <- rpois(nrow(mothers), lambda = mean_offspring)
+  }
+  
+  fathers <- current_pop %>%
+    filter(sex == '0', age >= rep.age)
+  
+  # Generate offspring
+  if(exists("mothers") & nrow(mothers) > 0 & nrow(fathers) > 0){
+    offspring_list <- lapply(1:nrow(mothers), function(i) {
+      mom <- mothers$id[i]
+      n_off <- mothers$num_offspring[i]
+      if(n_off == 0) return(NULL)
+      
+      dads <- sample(fathers$id, n_off, replace = TRUE)
+      sex_off <- sample(c('1','0'), n_off, replace = TRUE, prob = c(init.prop.female, 1 - init.prop.female))
+      
+      data.frame(
+        age = rep(0, n_off),
+        sex = sex_off,
+        mother = mom,
+        father = dads,
+        cohort = rep(yr, n_off),
+        number = NA,
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    offspring_df <- do.call(rbind, offspring_list)
+    
+    # Assign number and ID
+    max_number <- max(current_pop$number)
+    offspring_df$number <- seq(max_number + 1, length.out = nrow(offspring_df))
+    offspring_df$id <- paste(offspring_df$cohort, offspring_df$number, offspring_df$sex, sep = "_")
+    
+    # Ensure same column order as pop.year0
+    offspring_df <- offspring_df[, names(pop.year0)]
+    
+  } else {
+    # Create empty offspring data frame with same column types
+    offspring_df <- empty_offspring
+  }
+  
+  # Combine current population + offspring
+  current_pop <- bind_rows(current_pop, offspring_df)
 
-}", file = "HSPPOP.simplest.sim.jags")
-
-
-
-
-#### Data to define for JAGS model ####
-
-
-# years being estimated (years that actually have potential)
-Cohort_years <- possible_pairs %>% 
-  group_by(cohort_2) %>% 
-  dplyr::summarise(
-    Pair_viable_count = sum(HSPPOP_candidate > 0, na.rm = TRUE)
-  ) %>% 
-  filter(Pair_viable_count > 0) %>%     # keep only cohorts with >0
-  arrange(cohort_2)
-
-# extract years (count to give to be i in JAGS)
-years <- nrow(Cohort_years)
-
-
-# group together by cohort year and age dif (differing probabilities)
-Cohort_years_cohort_age <- possible_pairs %>%
-  group_by(cohort_2, AgeDif) %>%
-  dplyr::summarise(
-    Pair_viable_count_per_agedif = sum(HSPPOP_candidate > 0, na.rm = TRUE))
-
-
-# add the counts to each observation
-observations <- possible_pairs %>%
-  left_join(Cohort_years_cohort_age, by = c("cohort_2", "AgeDif"))
-
-# year index to link kinship to years (just the number to match it, not the actual year)
-year_index <- factor(observations$cohort_2, levels = Cohort_years$cohort_2)
-observations <- observations %>%
-  mutate(
-    year_index = as.integer(year_index)
-  )
-
-
-
-
-# Count the ones with known sex (U = 0)
-# Count females (F = 1)
-observations <- observations %>%
-  mutate(
-    knownSex = as.numeric(!is.na(sex_num)),
-    IsFemale = as.numeric(!is.na(sex_num) & (sex_num == 0))  # if sex_num encoded 0 = female
-  )
-
-
-
-
-# Match true pairs
-observations <- observations %>% 
-  mutate(true_HSP = if_else(
-    mother_1 == mother_2 | father_1 == father_2, 1, 0),
-    true_POP = if_else(
-      id_1 == mother_2 | id_1 == father_2, 1, 0),
-    TruePairs = if_else(
-      true_POP == 1 | true_HSP == 1, 1, 0))
-
-
-
-#### Now collapse based on cohort 2, age difference, RObase, if sex is known, and female or male 
-group_vars <- c("cohort_2", "AgeDif", "knownSex", "IsFemale", "RObase", "Age_dif_exp")
-
-collapsed <- observations %>%
-  drop_na(mother_1, father_1) %>% 
-  group_by(year_index,across(all_of(group_vars))) %>%
-  dplyr::summarise(
-    Pair_viable_count_per_agedif = n(),                   
-    TruePairs = sum(TruePairs, na.rm=TRUE),
-    .groups = "drop"
-  ) %>%
-  arrange(cohort_2, AgeDif)
-
-
-
-#### Run for single year - All stocks ----
-# use as.numeric if any are giving issues
-# make sure all (except years for i loop) are equal to nobs! Check with length first...
-data = list( years = years,  # number of cohorts,
-             TruePairs = collapsed$TruePairs,
-             AgeDif = collapsed$Age_dif_exp,
-             RObase = collapsed$RObase,
-             nobs = nrow(collapsed),
-             Pair_viable_count_per_agedif = collapsed$Pair_viable_count_per_agedif,
-             year=collapsed$year_index)
-
-# Initial values
-inits = function() {
-  list(
-    mu = runif(1, 1, 100),
-    sd = runif(1, 1, 100),
-    propM = runif(1,0.01, 0.99),
-    Nadult = rep(100, years),   # vector of length POP_years
-    surv = runif(1,0.01, 0.99))
+  # Store population of this year
+  pop_list[[yr + 1]] <- current_pop
+  
+  # Add new fish to running all_fish table
+  all_fish <- bind_rows(all_fish, offspring_df)
+  
+  # Clean up mothers variable for next iteration
+  rm(mothers)
 }
 
-# Parameters to follow
-params = c("Nadult","surv","propM")
-
-nburn <- 3000
-nchains <- 3
-niter <- 10000
-n.cores = 3
-
-
-Out_CKMR_sim1 = jagsUI::jags(data, inits, params, "HSPPOP.simplest.sim.jags", n.burnin = nburn, n.chains = nchains, n.iter = niter, parallel = T, verbose = T)
 
 
 
 
-#### Plot against true populations and compare
-# Extract posterior summary as a data frame
-nhat <- as.data.frame(Out_CKMR_sim1$summary)
+#### Inspect the files
+names(pop_list) <- 0:(length(pop_list)-1) # rename the year for population so it starts at 0 (cohort will match year)
+pop_list 
 
-# Keep only the Nadult rows
-nhat <- nhat[grep("^Nadult", rownames(nhat)), ]
+all_fish 
 
-# Add a Year index (1, 2, 3, ...)
-nhat$Year <- 1:nrow(nhat)
+current_pop
 
-# Select the useful columns
-nhat_df <- nhat %>%
-  dplyr::select(Year, mean, `2.5%`, `50%`, `97.5%`)
+samples 
 
 
-library(ggplot2)
-true_abundance$name <- as.integer(true_abundance$name)
-nhat_df <- left_join(nhat_df,true_abundance,by = c("Year" = "year_index"))
+years_to_estimate <- sort(unique(samples$cohort))
 
-ggplot(nhat_df, aes(x = Year, y = mean)) +
-  geom_line(color = "blue", linewidth = 1) +
+## Population size per year
+true_abundance <- lapply(pop_list, function(df){
+                          df %>% 
+                           filter(age >=5) %>% 
+                           nrow()})
+
+true_abundance <- as.data.frame(true_abundance) %>% 
+  pivot_longer(cols = everything())
+
+true_abundance # check to make sure there isn't letters in the year names. Re run if true, idk why this is happening
+
+
+true_abundance$name <- as.integer(sub("X", "",true_abundance$name))
+true_abundance$name <- true_abundance$name %>% 
+  as.integer()
+true_abundance <- true_abundance %>% 
+  filter(name %in% years_to_estimate) %>% 
+  mutate(year_index = row_number(.))
+
+
+# Graph
+ggplot(true_abundance, aes(x = year_index, y = value, group = 1)) +
   geom_point(color = "blue") +
-  geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha = 0.2, fill = "lightblue") +
+  geom_line(color = "blue") +
+  # scale_y_continuous(limits = c(0, 200)) + 
   labs(
     x = "Year (Cohort index)",
-    y = expression(hat(N)[adult]),
-    #title = "Posterior estimates of adult 
-    #abundance (N-hat) in a mixed fishery
-    #with uniform parameters"
-  ) +
-  theme_minimal(base_size = 14) +
-  geom_point(data = true_abundance, aes(x = year_index, y = value, group = 1),color = "red") +
-  geom_line(data = true_abundance, aes(x = year_index, y = value, group = 1),color = "red")
-
-
+    y = expression(hat(N)[adult])) +
+  theme_bw()
 
 
