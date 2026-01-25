@@ -79,7 +79,7 @@ sampling_window <- (run.years - years + 1):run.years
 
 samples <- data.frame() # create empty data frame
 
-sample_rate <- 0.07 # change percent as needed
+sample_rate <- 0.005 # change percent as needed
 
 empty_offspring <- pop.year0[0, ] %>%
   mutate(
@@ -241,7 +241,7 @@ true_abundance <- lapply(pop_list, function(df){
 true_abundance <- as.data.frame(true_abundance) %>% 
   pivot_longer(cols = everything())
 
-true_abundance # check to make sure there isn't letters in the year names. Re run if true, idk why this is happening
+true_abundance # check to make sure there isn't letters in the year names. Re run if true, idk why this is happening on occasion...
 
 
 true_abundance$name <- as.integer(sub("X", "",true_abundance$name))

@@ -1,0 +1,21 @@
+model{
+  surv ~ dbeta(1, 1)
+
+  # Adult numbers
+	for(i in 1:years) {
+	
+	  Nadult[i] ~ dunif(100,10000)
+
+	}
+	
+	
+  for(j in 1:nobs) {
+    
+    TruePairs[j] ~ dbinom(
+      (RObase[j] * ((surv)^ AgeDif[j])) /
+      (Nadult[year[j]]),
+      Pair_viable_count_per_agedif[j]
+    )
+  }	
+
+}
