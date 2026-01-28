@@ -13,22 +13,25 @@ library(ggplot2)
 ######## Generate population at year 0 ########
 
 ## Define parameters
-init.pop.size <- 5000  ## ^
+init.pop.size <- 1000  ## ^
 
 init.prop.female <- 0.5 
 
 
-age <- rep(4, times = init.pop.size) # set at 5 so these guys can mate when the loop starts
+age <- rep(5, times = init.pop.size) # set at 5 so these guys can mate when the loop starts
 
 sex <- sample(c('1','0'), size = init.pop.size,
               prob = c(init.prop.female, 1 - init.prop.female),
               replace = TRUE) 
 
+# set parent columns clear for these folks
 mother <- rep(NA, init.pop.size)
 
 father <- rep(NA, init.pop.size)
 
 cohort <- rep(0, times = init.pop.size)
+
+# assign unique number for fish
 
 number <- seq_len(init.pop.size)
 
@@ -42,24 +45,24 @@ pop.year0 <- data.frame(id, number, cohort, age, sex, mother, father, stringsAsF
 
 
 ######## Set simulation parameters ########
-rep.age <- 5 # minimum age to reproduce
+rep.age <- 5 # minimum age to reproduce (mean for now)
 
-mean_offspring <- 200 # mean number of offspring per female ## ^
+mean_offspring <- 50 # mean number of offspring per female ## ^
 
 # survival_prob <- 0.4 # annual survival probability (only have one, change in code to shift by getting rid of the following)
-# Chaning to age dependent survival
-surv_juv0   <- 0.2  # age 0 ## ^
-surv_juv1_4 <- 0.5  # ages 1–4 ## ^
-surv_adult  <- 0.6  # age 5+ ## ^
+# Changing to age dependent survival
+surv_juv0   <- 0.35  # age 0 ## ^
+surv_juv1_4 <- 0.65  # ages 1–4 ## ^
+surv_adult  <- 0.75 # age 5+ ## ^
  
-p_catch <- 0.1 # percent mortality of catch ## ^ 
+p_catch <- 0.1 # percent mortality of catch (separate from natural) ## ^ 
 
 K <- 5000  # carrying capacity to stabilize population ## ^ 
 
 
 years <- 20 # number of years to simulate and extract ## ^
 
-burn.in <- 50 # number of years to run the simulation before counting 
+burn.in <- 100 # number of years to run the simulation before counting 
 
 run.years <- burn.in + years # total years to run
 
@@ -79,7 +82,7 @@ sampling_window <- (run.years - years + 1):run.years
 
 samples <- data.frame() # create empty data frame
 
-sample_rate <- 0.005 # change percent as needed
+sample_rate <- 0.15 # change percent as needed
 
 empty_offspring <- pop.year0[0, ] %>%
   mutate(
@@ -98,58 +101,6 @@ for (yr in 1:run.years) {
   # Age everyone
   current_pop <- current_pop %>% mutate(age = age + 1)
   
-  ### AGE-STRUCTURED NATURAL SURVIVAL ###
-  current_pop$survive_nat <- NA_integer_
-  
-  # age 0
-  idx0 <- current_pop$age == 0
-  current_pop$survive_nat[idx0] <- rbinom(sum(idx0), 1, surv_juv0)
-  
-  # ages 1–4
-  idx1_4 <- current_pop$age >= 1 & current_pop$age <= 4
-  current_pop$survive_nat[idx1_4] <- rbinom(sum(idx1_4), 1, surv_juv1_4)
-  
-  # adults 5+
-  idx_adult <- current_pop$age >= 5
-  current_pop$survive_nat[idx_adult] <- rbinom(
-    sum(idx_adult), 1,
-    surv_adult * exp(-nrow(current_pop) / (8*K))
-  )
-  
-  ### NATURAL SURVIVORS ###
-  alive_after_nat <- current_pop %>% filter(survive_nat == 1)
-  
-  ### FISHING MORTALITY ###
-  alive_after_nat$caught <- rbinom(nrow(alive_after_nat), 1, p_catch)
-  
-  harvested_this_year <- alive_after_nat %>% filter(caught == 1)
-  survivors_to_next_year <- alive_after_nat %>% filter(caught == 0)
-  
-  ### UPDATE POPULATION ###
-  current_pop <- survivors_to_next_year
-  # table of the dead fish (natural mort. or fishing mort)
-  dead_this_year <- current_pop[current_pop$survive == 0, ]
-  
-  # ---- SAMPLE  (last 10 years) ----
-  if (yr %in% sampling_window) {
-    n_sample <- floor(sample_rate * nrow(harvested_this_year))
-    
-    sampled_fish <- harvested_this_year %>%
-      slice_sample(n = min(n_sample, nrow(harvested_this_year)), replace = FALSE) %>%
-      mutate(year_sampled = yr)
-    
-    samples <- bind_rows(samples, sampled_fish)
-  }
-  
-  # Keep only survivors
-  current_pop <- current_pop[current_pop$survive == 1, ]
-  current_pop$survive <- NULL
-  
-  # if pop goes extinct
-  if(nrow(current_pop) == 0){
-    message(paste("Population extinct at year", yr))
-    break
-  }
   
   # Select mature females and males
   mothers <- current_pop %>%
@@ -213,6 +164,63 @@ for (yr in 1:run.years) {
   
   # Clean up mothers variable for next iteration
   rm(mothers)
+  
+  ### AGE-STRUCTURED NATURAL SURVIVAL ###
+  current_pop$survive_nat <- NA_integer_
+  
+  # age 0
+  idx0 <- current_pop$age == 0
+  current_pop$survive_nat[idx0] <- rbinom(sum(idx0), 1, surv_juv0)
+  
+  # ages 1–4
+  idx1_4 <- current_pop$age >= 1 & current_pop$age <= 4
+  current_pop$survive_nat[idx1_4] <- rbinom(sum(idx1_4), 1, surv_juv1_4)
+  
+  # adults 5+
+  idx_adult <- current_pop$age >= 5
+  current_pop$survive_nat[idx_adult] <- rbinom(
+    sum(idx_adult), 1,
+    surv_adult * exp(-nrow(current_pop) / (8*K))
+  )
+  
+  ### NATURAL SURVIVORS ###
+  alive_after_nat <- current_pop %>% filter(survive_nat == 1)
+  
+  ### FISHING MORTALITY ###
+  alive_after_nat$caught <- rbinom(nrow(alive_after_nat), 1, p_catch)
+  
+  harvested_this_year <- alive_after_nat %>% filter(caught == 1)
+  survivors_to_next_year <- alive_after_nat %>% filter(caught == 0)
+  
+  
+  
+  # ---- SAMPLE  (last 10 years) ----
+  if (yr %in% sampling_window) {
+    n_sample <- floor(sample_rate * nrow(harvested_this_year))
+    
+    sampled_fish <- harvested_this_year %>%
+      slice_sample(n = min(n_sample, nrow(harvested_this_year)), replace = FALSE) %>%
+      mutate(year_sampled = yr)
+    
+    samples <- bind_rows(samples, sampled_fish)
+  }
+  
+  
+  ### UPDATE POPULATION ###
+  current_pop <- survivors_to_next_year
+  # table of the dead fish (natural mort. or fishing mort)
+  dead_this_year <- current_pop[current_pop$survive == 0, ]
+  
+  
+  # Keep only survivors
+  current_pop <- current_pop[current_pop$survive == 1, ]
+  current_pop$survive <- NULL
+  
+  # if pop goes extinct
+  if(nrow(current_pop) == 0){
+    message(paste("Population extinct at year", yr))
+    break
+  }
 }
 
 
@@ -229,6 +237,40 @@ current_pop
 
 samples 
 
+
+## population change through full time period
+true_abundance_full <- lapply(pop_list, function(df){
+  df %>% 
+    filter(age >=5) %>% 
+    nrow()})
+
+true_abundance_full <- as.data.frame(true_abundance_full) %>% 
+  pivot_longer(cols = everything())
+
+true_abundance_full # check to make sure there isn't letters in the year names. Re run if true, idk why this is happening on occasion...
+
+
+true_abundance_full$name <- as.integer(sub("X", "",true_abundance_full$name))
+true_abundance_full$name <- true_abundance_full$name %>% 
+  as.integer()
+true_abundance_full <- true_abundance_full %>% 
+  mutate(year_index = row_number(.))
+
+
+ggplot(true_abundance_full, aes(x = year_index, y = value, group = 1)) +
+  geom_point(color = "blue") +
+  geom_line(color = "blue") +
+  # scale_y_continuous(limits = c(0, 200)) + 
+  labs(
+    x = "Year (Cohort index)",
+    y = expression(hat(N)[adult])) +
+  theme_bw()
+
+
+
+
+
+## Only last ten years
 
 years_to_estimate <- sort(unique(samples$cohort))
 

@@ -171,6 +171,11 @@ observations <- observations %>%
 #### Now collapse based on cohort 2, age difference, RObase, if sex is known, and female or male 
 group_vars <- c("cohort_2", "AgeDif", "knownSex", "IsFemale", "RObase", "Age_dif_exp")
 
+collapsed_HSP <- observations %>% 
+  filter()
+
+
+
 collapsed <- observations %>%
   drop_na(mother_1, father_1) %>% 
   group_by(year_index,across(all_of(group_vars))) %>%
@@ -235,12 +240,17 @@ nhat_df <- nhat %>%
 
 library(ggplot2)
 true_abundance$name <- as.integer(true_abundance$name)
+
+true_abundance <- true_abundance %>% 
+  filter(name %in% collapsed$cohort_2)
+
+
 nhat_df <- left_join(nhat_df,true_abundance,by = c("Year" = "year_index"))
 
 ggplot(nhat_df, aes(x = Year, y = mean)) +
   geom_line(color = "blue", linewidth = 1) +
   geom_point(color = "blue") +
-  geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha = 0.2, fill = "lightblue") +
+  geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha = 0.2, fill = "blue") +
   labs(
     x = "Year (Cohort index)",
     y = expression(hat(N)[adult]),
