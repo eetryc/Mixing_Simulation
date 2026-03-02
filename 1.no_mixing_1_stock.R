@@ -1,8 +1,38 @@
-########################################
-####### Graphing function ##############
-########################################
+###########################
+######## No Stocks ########
+###########################
 
 
+
+
+
+# 1. sim
+
+sim <- stock.sim(1000)
+
+
+# 2. Sample
+
+samples <- bind_rows(
+  lapply(seq_along(sim$pop_list), function(i) {
+    sampler(
+      pop.year = sim$pop_list[[i]],
+      yr = i - 1,                   
+      sampling_window = sampling_window,
+      rep.age = rep.age,
+      sample_rate = sample_rate
+    )
+  })
+)
+
+
+# 3. CKMR
+
+ckmr <- CKMR_est(samples)
+
+
+
+# 4. Graph 
 # Replace p with the simulation object name
 
 #### 1. Graph the true population ####
